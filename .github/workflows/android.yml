@@ -26,8 +26,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Install Android SDK packages
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - run: gradle :app:testDebugUnitTest --stacktrace
 
   lint:
@@ -42,8 +40,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Install Android SDK packages
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - run: gradle :app:lintDebug --stacktrace
 
   build:
@@ -58,8 +54,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Install Android SDK packages
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
@@ -81,8 +75,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Install Android SDK packages
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - uses: ReactiveCircus/android-emulator-runner@v2
         with:
           api-level: 35
