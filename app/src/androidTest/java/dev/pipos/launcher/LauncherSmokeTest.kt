@@ -1,7 +1,6 @@
 package dev.pipos.launcher
 
 import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
