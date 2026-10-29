@@ -4,42 +4,51 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Next version (ignored when an exact version is entered)'
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: 'Optional exact version, e.g. 0.2.0 for the first release'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+# Prevent two releases from choosing the same "next version".
 concurrency:
-  group: release-${{ github.ref }}
+  group: pip-os-production-release
   cancel-in-progress: false
 
 jobs:
   verify:
-    name: Validate version and test
+    name: Resolve version, unit tests and lint
     runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       version_code: ${{ steps.version.outputs.version_code }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate semantic version tag
+        with:
+          fetch-depth: 0
+      - name: Test version selection
+        run: bash scripts/test-release-version.sh
+      - name: Resolve release version
         id: version
         shell: bash
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Expected an exact version tag such as v0.2.0, got: $tag" >&2
-            exit 1
-          fi
-          major="${BASH_REMATCH[1]}"
-          minor="${BASH_REMATCH[2]}"
-          patch="${BASH_REMATCH[3]}"
-          if (( major > 1999 || minor > 999 || patch > 999 )); then
-            echo 'Version exceeds Android versionCode encoding limits' >&2
-            exit 1
-          fi
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '' }}
+          RELEASE_BUMP: ${{ inputs.bump || 'patch' }}
+        run: bash scripts/resolve-release-version.sh
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -48,7 +57,10 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Unit tests and lint
-        run: gradle :app:testDebugUnitTest :app:lintRelease --stacktrace -PreleaseVersion=${{ steps.version.outputs.version }} -PreleaseVersionCode=${{ steps.version.outputs.version_code }}
+        run: >
+          gradle :app:testDebugUnitTest :app:lintRelease --stacktrace
+          -PreleaseVersion=${{ steps.version.outputs.version }}
+          -PreleaseVersionCode=${{ steps.version.outputs.version_code }}
 
   release:
     name: Sign and publish APK and AAB
@@ -76,7 +88,7 @@ jobs:
           set -euo pipefail
           for value in "$ANDROID_KEYSTORE_BASE64" "$PIPOS_KEYSTORE_PASSWORD" "$PIPOS_KEY_ALIAS" "$PIPOS_KEY_PASSWORD"; do
             if [[ -z "$value" ]]; then
-              echo 'Missing Android signing secrets. See README.md > Publishing a release.' >&2
+              echo 'Missing Android signing secrets. See docs/RELEASING.md.' >&2
               exit 1
             fi
           done
@@ -91,12 +103,13 @@ jobs:
             -PreleaseVersionCode=${{ needs.verify.outputs.version_code }}
       - name: Prepare release files
         shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          version="${{ needs.verify.outputs.version }}"
-          cp app/build/outputs/apk/release/app-release.apk "dist/PIP-OS-v${version}.apk"
-          cp app/build/outputs/bundle/release/app-release.aab "dist/PIP-OS-v${version}.aab"
+          cp app/build/outputs/apk/release/app-release.apk "dist/PIP-OS-v${VERSION}.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "dist/PIP-OS-v${VERSION}.aab"
           (cd dist && sha256sum *.apk *.aab > SHA256SUMS.txt)
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -104,11 +117,23 @@ jobs:
           name: pip-os-v${{ needs.verify.outputs.version }}
           path: dist/*
           if-no-files-found: error
-      - name: Publish GitHub release
+      - name: Publish GitHub release and create tag if needed
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag \
-            --title "PIP-OS ${{ needs.verify.outputs.version }}" \
-            --generate-notes
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            # GitHub creates the tag at the exact validated source commit.
+            gh release create "$RELEASE_TAG" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "PIP-OS $RELEASE_VERSION" \
+              --generate-notes
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --title "PIP-OS $RELEASE_VERSION" \
+              --generate-notes
+          fi

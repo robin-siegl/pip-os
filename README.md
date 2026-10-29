@@ -130,6 +130,6 @@ PIP-OS has no backend, analytics, telemetry, or internet permission. Favorites, 
 
 ## CI and downloadable production releases
 
-Pull requests and pushes to `main` run separate GitHub Actions jobs for **unit tests**, **Android lint**, **debug APK assembly**, and **emulator UI tests**. Debug APKs are available from the workflow run's artifacts.
+Use **Actions > Production release > Run workflow** on `main` to publish a new version without creating a tag yourself. Choose patch, minor or major version bump, or enter an exact version. The first release defaults to `v0.2.0` if no tags exist. The workflow runs tests and lint, builds signed APK/AAB files, and publishes the GitHub Release with a newly created tag only after packaging succeeds. Production builds require four repository signing secrets, configured once. You can still push an annotated `vMAJOR.MINOR.PATCH` tag to trigger the same workflow.
 
-Publishing an annotated version tag such as `v0.2.0` triggers the production workflow, which validates the tag, runs tests, and builds a **signed APK and AAB**. These are uploaded to GitHub Releases along with SHA-256 checksums. Production builds require four repository signing secrets, configured once. See [Releasing PIP-OS](docs/RELEASING.md) for exact steps and the important upgrade/signature caveat. Do not commit signing keys.
+Pull requests and pushes to `main` separately run unit tests, Android lint, debug APK assembly, and emulator UI tests. Debug APKs are Actions artifacts, not production-signed releases. See [Releasing PIP-OS](docs/RELEASING.md) for instructions and signing warnings. Never commit signing keys.
