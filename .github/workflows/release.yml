@@ -1,0 +1,116 @@
+name: Production release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Validate version and test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate semantic version tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Expected an exact version tag such as v0.2.0, got: $tag" >&2
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          if (( major > 1999 || minor > 999 || patch > 999 )); then
+            echo 'Version exceeds Android versionCode encoding limits' >&2
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "version_code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Unit tests and lint
+        run: gradle :app:testDebugUnitTest :app:lintRelease --stacktrace -PreleaseVersion=${{ steps.version.outputs.version }} -PreleaseVersionCode=${{ steps.version.outputs.version_code }}
+
+  release:
+    name: Sign and publish APK and AAB
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PIPOS_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      PIPOS_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      PIPOS_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Restore signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in "$ANDROID_KEYSTORE_BASE64" "$PIPOS_KEYSTORE_PASSWORD" "$PIPOS_KEY_ALIAS" "$PIPOS_KEY_PASSWORD"; do
+            if [[ -z "$value" ]]; then
+              echo 'Missing Android signing secrets. See README.md > Publishing a release.' >&2
+              exit 1
+            fi
+          done
+          keystore="$RUNNER_TEMP/pipos-production.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "PIPOS_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+      - name: Build signed release
+        run: |
+          gradle :app:assembleRelease :app:bundleRelease --stacktrace \
+            -PreleaseVersion=${{ needs.verify.outputs.version }} \
+            -PreleaseVersionCode=${{ needs.verify.outputs.version_code }}
+      - name: Prepare release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${{ needs.verify.outputs.version }}"
+          cp app/build/outputs/apk/release/app-release.apk "dist/PIP-OS-v${version}.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "dist/PIP-OS-v${version}.aab"
+          (cd dist && sha256sum *.apk *.aab > SHA256SUMS.txt)
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-os-v${{ needs.verify.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "PIP-OS ${{ needs.verify.outputs.version }}" \
+            --generate-notes
