@@ -315,17 +315,16 @@ private fun AppsPanel(
     val edgeThreshold = with(LocalDensity.current) { 60.dp.toPx() }
     val autoScrollStep = with(LocalDensity.current) { 12.dp.toPx() }
     var listTop by remember { mutableFloatStateOf(0f) }
-    var handleTop by remember { mutableFloatStateOf(0f) }
     var draggedKey by remember { mutableStateOf<String?>(null) }
     var dropTargetKey by remember { mutableStateOf<String?>(null) }
     var pointerY by remember { mutableFloatStateOf(0f) }
-    var translationY by remember { mutableFloatStateOf(0f) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
 
     // Only commits once when the finger is released. No DataStore writes during dragging.
     fun resetDrag() {
         draggedKey = null
         dropTargetKey = null
-        translationY = 0f
+        dragOffsetY = 0f
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -354,6 +353,7 @@ private fun AppsPanel(
                 if (editing || layout == FavoriteLayout.LIST) {
                     items(favoriteApps, key = { "pin:${it.key}" }) { app ->
                         val index = favoriteApps.indexOfFirst { it.key == app.key }
+                        var handleTop by remember(app.key) { mutableFloatStateOf(0f) }
                         FavoriteItem(
                             app = app,
                             index = index,
@@ -367,7 +367,7 @@ private fun AppsPanel(
                             modifier = Modifier
                                 .graphicsLayer {
                                     if (draggedKey == app.key) {
-                                        translationY = translationY
+                                        translationY = dragOffsetY
                                         alpha = 0.83f
                                     }
                                 }
@@ -380,12 +380,12 @@ private fun AppsPanel(
                                         onDragStart = { start ->
                                             draggedKey = app.key
                                             dropTargetKey = null
-                                            translationY = 0f
+                                            dragOffsetY = 0f
                                             pointerY = handleTop + start.y
                                         },
                                         onDrag = { change, distance ->
                                             change.consume()
-                                            translationY += distance.y
+                                            dragOffsetY += distance.y
                                             pointerY += distance.y
                                             val localY = pointerY - listTop
                                             val rows = listState.layoutInfo.visibleItemsInfo.filter {
@@ -395,7 +395,7 @@ private fun AppsPanel(
                                                 abs(localY - (it.offset + it.size / 2f))
                                             }
                                             dropTargetKey = if (
-                                                abs(translationY) >= size.height / 2f &&
+                                                abs(dragOffsetY) >= size.height / 2f &&
                                                 hovered != null &&
                                                 hovered.key != "pin:${app.key}"
                                             ) (hovered.key as String).removePrefix("pin:") else null
