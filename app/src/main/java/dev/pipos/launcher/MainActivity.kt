@@ -48,7 +48,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -366,10 +365,8 @@ private fun AppsPanel(
                             moveDown = { favoriteApps.getOrNull(index + 1)?.let { move(app.key, it.key) } },
                             modifier = Modifier
                                 .graphicsLayer {
-                                    if (draggedKey == app.key) {
-                                        translationY = dragOffsetY
-                                        alpha = 0.83f
-                                    }
+                                    translationY = if (draggedKey == app.key) dragOffsetY else 0f
+                                    alpha = if (draggedKey == app.key) 0.83f else 1f
                                 }
                                 .background(if (dropTargetKey == app.key) accent.copy(alpha = 0.22f) else Color.Transparent),
                             dragHandleModifier = Modifier
