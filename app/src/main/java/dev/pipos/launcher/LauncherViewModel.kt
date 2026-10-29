@@ -21,6 +21,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val settingsRepository = LauncherPreferencesRepository(application)
     private val _preferences = MutableStateFlow(LauncherPreferences())
     val preferences: StateFlow<LauncherPreferences> = _preferences.asStateFlow()
+    private val _preferencesLoaded = MutableStateFlow(false)
+    val preferencesLoaded: StateFlow<Boolean> = _preferencesLoaded.asStateFlow()
     private val appsRepository = AppRepository(application)
     private val favoritesRepository = FavoritesRepository(application)
     private val _apps = MutableStateFlow<List<LaunchableApp>>(emptyList())
@@ -33,7 +35,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshApps()
         viewModelScope.launch { favoritesRepository.favorites.collect { _favorites.value = it } }
-        viewModelScope.launch { settingsRepository.preferences.collect { _preferences.value = it } }
+        viewModelScope.launch {
+            settingsRepository.preferences.collect {
+                _preferences.value = it
+                _preferencesLoaded.value = true
+            }
+        }
     }
 
     fun refreshApps() {
@@ -53,6 +60,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun launch(app: LaunchableApp) {
         if (!appsRepository.launch(app)) _error.value = "Unable to launch ${app.label}"
     }
+
+    fun dismissHomeSetup() { viewModelScope.launch { settingsRepository.dismissHomeSetup() } }
 
     fun setTheme(profile: ThemeProfile) { viewModelScope.launch { settingsRepository.setTheme(profile) } }
     fun setEffects(enabled: Boolean) { viewModelScope.launch { settingsRepository.setEffects(enabled) } }

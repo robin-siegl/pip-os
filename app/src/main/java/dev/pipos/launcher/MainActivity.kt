@@ -1,5 +1,6 @@
 package dev.pipos.launcher
 
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -11,6 +12,8 @@ import android.os.StatFs
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -65,6 +68,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -100,9 +105,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
     val apps by vm.apps.collectAsStateWithLifecycle()
-    val favorites by vm.favorites.collectAsStateWithLifecycle()
     val prefs by vm.preferences.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val preferencesLoaded by vm.preferencesLoaded.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -122,9 +127,32 @@ private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
     val visible = remember(apps, search, category, prefs.hidden) {
         filterApps(apps.filter { it.key !in prefs.hidden && (category == AppCategory.ALL || categoryFor(it) == category) }, search)
     }
-    val favoriteApps = remember(apps, favorites, prefs.hidden) {
-        val indexed = apps.associateBy { it.key }
-        favorites.mapNotNull { indexed[it] }.filter { it.key !in prefs.hidden }
+    val homeRoleManager = remember(context) { context.getSystemService(RoleManager::class.java) }
+    var isDefaultHome by remember(context) {
+        mutableStateOf(homeRoleManager?.isRoleHeld(RoleManager.ROLE_HOME) == true)
+    }
+    val homeRoleRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        isDefaultHome = homeRoleManager?.isRoleHeld(RoleManager.ROLE_HOME) == true
+        if (isDefaultHome) vm.dismissHomeSetup()
+    }
+    val openHomeSettings: () -> Unit = {
+        runCatching { context.startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) }
+            .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+    }
+    val requestHomeRole: () -> Unit = {
+        if (homeRoleManager?.isRoleHeld(RoleManager.ROLE_HOME) == true) {
+            isDefaultHome = true
+            vm.dismissHomeSetup()
+        } else if (homeRoleManager?.isRoleAvailable(RoleManager.ROLE_HOME) == true) {
+            runCatching { homeRoleRequest.launch(homeRoleManager.createRequestRoleIntent(RoleManager.ROLE_HOME)) }
+                .onFailure { openHomeSettings() }
+        } else {
+            openHomeSettings()
+        }
+    }
+
+    LaunchedEffect(preferencesLoaded, isDefaultHome, prefs.homeSetupDismissed) {
+        if (preferencesLoaded && isDefaultHome && !prefs.homeSetupDismissed) vm.dismissHomeSetup()
     }
 
     val submit: () -> Unit = {
@@ -159,8 +187,13 @@ private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
             else -> tab = "APPS"
         }
     }
-    DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) vm.refreshApps() }
+    DisposableEffect(lifecycle, homeRoleManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vm.refreshApps()
+                isDefaultHome = homeRoleManager?.isRoleHeld(RoleManager.ROLE_HOME) == true
+            }
+        }
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
@@ -176,10 +209,12 @@ private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
             Box(Modifier.weight(1f)) {
                 val section = if (settings) "SETTINGS" else tab
                 if (prefs.reduceMotion) {
-                    SectionContent(section, accent, apps, visible, favoriteApps, favorites, prefs, category,
+                    SectionContent(section, accent, apps, visible, prefs, category,
                         onCategory = { category = it }, editLayout = editLayout,
                         onToggleEditing = { editLayout = !editLayout }, vm = vm, context = context,
-                        onCloseSettings = { settings = false })
+                        onCloseSettings = { settings = false },
+                        isDefaultHome = isDefaultHome, onRequestHomeRole = requestHomeRole,
+                        onOpenHomeSettings = openHomeSettings)
                 } else {
                     AnimatedContent(
                         targetState = section,
@@ -190,10 +225,12 @@ private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
                         },
                         label = "PIP-OS section"
                     ) { current ->
-                        SectionContent(current, accent, apps, visible, favoriteApps, favorites, prefs, category,
+                        SectionContent(current, accent, apps, visible, prefs, category,
                             onCategory = { category = it }, editLayout = editLayout,
                             onToggleEditing = { editLayout = !editLayout }, vm = vm, context = context,
-                            onCloseSettings = { settings = false })
+                            onCloseSettings = { settings = false },
+                        isDefaultHome = isDefaultHome, onRequestHomeRole = requestHomeRole,
+                        onOpenHomeSettings = openHomeSettings)
                     }
                 }
             }
@@ -234,6 +271,47 @@ private fun LauncherScreen(vm: LauncherViewModel = viewModel()) {
             }
         }
     }
+    if (preferencesLoaded && (booted || prefs.reduceMotion) &&
+        !prefs.homeSetupDismissed && !isDefaultHome
+    ) {
+        HomeSetupDialog(
+            accent = accent,
+            onSetHome = requestHomeRole,
+            onOpenHomeSettings = openHomeSettings,
+            onSkip = vm::dismissHomeSetup
+        )
+    }
+}
+
+@Composable
+private fun HomeSetupDialog(
+    accent: Color,
+    onSetHome: () -> Unit,
+    onOpenHomeSettings: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Dialog(onDismissRequest = onSkip) {
+        Column(
+            Modifier.fillMaxWidth().pipFrame(accent).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            PipText("PIP-OS // HOME SETUP", color = accent, prominent = true)
+            Text(
+                "Make PIP-OS your Home app to open this interface when you swipe Home.",
+                color = accent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 15.sp,
+                lineHeight = 22.sp
+            )
+            PipText(
+                "Android will ask you to confirm. You can switch back to Pixel Launcher anytime.",
+                color = accent.copy(alpha = .8f)
+            )
+            PipButton("SET AS HOME APP", accent, Modifier.fillMaxWidth(), onClick = onSetHome)
+            PipButton("HOME APP SETTINGS", accent, Modifier.fillMaxWidth(), onClick = onOpenHomeSettings)
+            PipButton("NOT NOW", accent, Modifier.fillMaxWidth(), onClick = onSkip)
+        }
+    }
 }
 
 @Composable
@@ -266,8 +344,6 @@ private fun SectionContent(
     accent: Color,
     apps: List<LaunchableApp>,
     visible: List<LaunchableApp>,
-    favoriteApps: List<LaunchableApp>,
-    favorites: List<String>,
     prefs: LauncherPreferences,
     category: AppCategory,
     onCategory: (AppCategory) -> Unit,
@@ -275,11 +351,14 @@ private fun SectionContent(
     onToggleEditing: () -> Unit,
     vm: LauncherViewModel,
     context: Context,
-    onCloseSettings: () -> Unit
+    onCloseSettings: () -> Unit,
+    isDefaultHome: Boolean,
+    onRequestHomeRole: () -> Unit,
+    onOpenHomeSettings: () -> Unit
 ) {
     when (section) {
-        "APPS" -> AppsPanel(accent, visible, favoriteApps, favorites, category, prefs.favoriteLayout, editLayout,
-            onCategory, onToggleEditing, vm::launch, vm::toggleFavorite, vm::moveFavorite, vm::hideApp)
+        "APPS" -> AppsPanel(accent, visible, apps, prefs, category, prefs.favoriteLayout, editLayout,
+            onCategory, onToggleEditing, vm::launch, vm::toggleFavorite, vm::moveFavorite, vm::hideApp, vm)
         "STAT" -> StatPanel(accent)
         "DATA" -> LinkPanel("DATA ARCHIVE", accent, listOf(
             "CALENDAR" to { openPackage(context, "com.google.android.calendar") },
@@ -289,7 +368,8 @@ private fun SectionContent(
             "PIP-OS does not collect your location.")
         "RADIO" -> RadioPanel(accent, apps, vm::launch)
         "SETTINGS" -> SettingsPanel(prefs, accent, vm::setTheme, vm::setEffects,
-            vm::setReduceMotion, vm::setFavoriteLayout, vm::clearHidden, onCloseSettings)
+            vm::setReduceMotion, vm::setFavoriteLayout, vm::clearHidden, onCloseSettings,
+            isDefaultHome, onRequestHomeRole, onOpenHomeSettings)
     }
 }
 
@@ -297,8 +377,8 @@ private fun SectionContent(
 private fun AppsPanel(
     accent: Color,
     visible: List<LaunchableApp>,
-    favoriteApps: List<LaunchableApp>,
-    favorites: List<String>,
+    apps: List<LaunchableApp>,
+    prefs: LauncherPreferences,
     category: AppCategory,
     layout: FavoriteLayout,
     editing: Boolean,
@@ -307,8 +387,16 @@ private fun AppsPanel(
     launch: (LaunchableApp) -> Unit,
     toggle: (LaunchableApp) -> Unit,
     move: (String, String) -> Unit,
-    hide: (LaunchableApp) -> Unit
+    hide: (LaunchableApp) -> Unit,
+    vm: LauncherViewModel
 ) {
+    // Collect at the point of use so the APPS page updates even while its
+    // parent is cached by AnimatedContent (including the first pinned item).
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val favoriteApps = remember(apps, favorites, prefs.hidden) {
+        val indexed = apps.associateBy { it.key }
+        favorites.mapNotNull(indexed::get).filterNot { it.key in prefs.hidden }
+    }
     val listState = rememberLazyListState()
     val dragScope = rememberCoroutineScope()
     val edgeThreshold = with(LocalDensity.current) { 60.dp.toPx() }
@@ -343,10 +431,10 @@ private fun AppsPanel(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (favoriteApps.isNotEmpty() && category == AppCategory.ALL) {
-                item {
+                item(key = "pinned-header") {
                     PipText(
                         if (editing) "★ PINNED // HOLD ≡ AND DRAG TO REORDER" else "★ PINNED // ${favoriteApps.size} SHORTCUTS",
-                        Modifier.padding(vertical = 6.dp), accent, prominent = true
+                        Modifier.padding(vertical = 6.dp).testTag("pinned-shortcuts"), accent, prominent = true
                     )
                 }
                 if (editing || layout == FavoriteLayout.LIST) {
@@ -426,7 +514,7 @@ private fun AppsPanel(
                         }
                     }
                 }
-                item {
+                item(key = "pinned-divider") {
                     Spacer(Modifier.height(8.dp))
                     HorizontalDivider(color = accent.copy(alpha = .25f))
                     PipText("ALL APPLICATIONS", Modifier.padding(vertical = 8.dp), accent, prominent = true)
@@ -435,7 +523,9 @@ private fun AppsPanel(
             items(visible, key = { "app:${it.key}" }) { app ->
                 AppItem(app, app.key in favorites, accent, launch, toggle, hide)
             }
-            if (visible.isEmpty()) item { PipText("NO APPLICATIONS FOUND", Modifier.padding(18.dp), accent) }
+            if (visible.isEmpty()) item(key = "empty-applications") {
+                PipText("NO APPLICATIONS FOUND", Modifier.padding(18.dp), accent)
+            }
         }
     }
 }
@@ -600,10 +690,17 @@ private fun SettingsPanel(
     prefs: LauncherPreferences, accent: Color,
     onTheme: (ThemeProfile) -> Unit, onEffects: (Boolean) -> Unit,
     onReduceMotion: (Boolean) -> Unit, onLayout: (FavoriteLayout) -> Unit,
-    onRestore: () -> Unit, onClose: () -> Unit
+    onRestore: () -> Unit, onClose: () -> Unit,
+    isDefaultHome: Boolean, onRequestHomeRole: () -> Unit,
+    onOpenHomeSettings: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PipText("CONFIGURATION // DISPLAY", color = accent, prominent = true)
+        PipText("HOME APP // ${if (isDefaultHome) "ACTIVE" else "NOT SELECTED"}", color = accent, prominent = true)
+        if (!isDefaultHome) {
+            PipButton("SET PIP-OS AS HOME", accent, Modifier.fillMaxWidth(), onClick = onRequestHomeRole)
+        }
+        PipButton("CHANGE HOME APP", accent, Modifier.fillMaxWidth(), onClick = onOpenHomeSettings)
         ThemeProfile.entries.forEach { profile ->
             PipButton("${if (prefs.theme == profile) "[X]" else "[ ]"} ${profile.name}", accent,
                 Modifier.fillMaxWidth(), active = prefs.theme == profile) { onTheme(profile) }

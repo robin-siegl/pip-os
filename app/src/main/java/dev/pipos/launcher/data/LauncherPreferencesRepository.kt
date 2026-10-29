@@ -15,7 +15,8 @@ data class LauncherPreferences(
     val reduceMotion: Boolean = false,
     val favoriteLayout: FavoriteLayout = FavoriteLayout.GRID,
     val hidden: Set<String> = emptySet(),
-    val commandHistory: List<String> = emptyList()
+    val commandHistory: List<String> = emptyList(),
+    val homeSetupDismissed: Boolean = false
 )
 
 private val Context.launcherSettings by preferencesDataStore(name = "terminal_settings")
@@ -27,6 +28,7 @@ class LauncherPreferencesRepository(private val context: Context) {
     private val layoutKey = stringPreferencesKey("favorites_layout")
     private val hiddenKey = stringSetPreferencesKey("hidden")
     private val historyKey = stringPreferencesKey("history")
+    private val homeSetupKey = booleanPreferencesKey("home_setup_dismissed")
 
     val preferences: Flow<LauncherPreferences> = context.launcherSettings.data.map { data ->
         LauncherPreferences(
@@ -35,8 +37,13 @@ class LauncherPreferencesRepository(private val context: Context) {
             reduceMotion = data[motionKey] ?: false,
             favoriteLayout = FavoriteLayout.entries.firstOrNull { it.name == data[layoutKey] } ?: FavoriteLayout.GRID,
             hidden = data[hiddenKey] ?: emptySet(),
-            commandHistory = data[historyKey]?.split("\n")?.filter(String::isNotBlank) ?: emptyList()
+            commandHistory = data[historyKey]?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
+            homeSetupDismissed = data[homeSetupKey] ?: false
         )
+    }
+
+    suspend fun dismissHomeSetup() {
+        context.launcherSettings.edit { it[homeSetupKey] = true }
     }
 
     suspend fun setTheme(theme: ThemeProfile) { context.launcherSettings.edit { it[themeKey] = theme.name } }

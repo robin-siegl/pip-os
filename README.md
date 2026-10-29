@@ -114,11 +114,17 @@ The script reports startup timing, a memory snapshot and graphics-frame diagnost
 
 The Android UI tests in `app/src/androidTest` cover navigation and the search accessibility node. The GitHub Actions workflow includes separate jobs for unit tests, lint, assembly, and emulator UI tests.
 
+## Home app setup and first-run flow
+
+On first launch, PIP-OS offers **Set as Home app** through Android's official HOME role dialog. The choice is optional: **Not now** leaves Pixel Launcher unchanged. The prompt is dismissed after the user skips or successfully selects PIP-OS, and the choice is kept in local DataStore. The **CFG** screen always provides a Home app status indicator, a button to request the Home role (when needed), and a **Change Home app** shortcut to system settings so users can switch back.
+
+The **APPS** panel observes favorites directly, ensuring the pinned section appears immediately after pinning the first application without navigating away.
+
 ## Known limitations
 
 - PIP-OS does not replace system settings, the notification shade, lock screen, or Android gesture navigation.
 - App categories are heuristic rather than user-defined.
-- Editing pinned order uses visible, accessible move controls rather than drag-and-drop.
+- Pinned apps can be reordered by long-pressing and dragging the handle in Edit mode; up/down buttons remain for accessibility.
 - DATA delegates to Android's calendar/settings; MAP delegates to an installed maps app.
 - Media-session support depends on the playback app and Android notification access.
 - Animated page transitions and panel visuals are implemented, but there is no continuous CRT flicker or screen curvature effect.
