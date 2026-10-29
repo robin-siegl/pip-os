@@ -46,7 +46,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { favoritesRepository.toggle(app.key) }
     }
 
-    fun moveFavorite(from: Int, to: Int) { viewModelScope.launch { favoritesRepository.move(from, to) } }
+    fun moveFavorite(dragged: String, target: String) {
+        viewModelScope.launch { favoritesRepository.moveByKey(dragged, target) }
+    }
 
     fun launch(app: LaunchableApp) {
         if (!appsRepository.launch(app)) _error.value = "Unable to launch ${app.label}"

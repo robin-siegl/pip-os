@@ -28,6 +28,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -44,6 +47,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
@@ -69,6 +78,8 @@ import dev.pipos.launcher.data.ThemeProfile
 import dev.pipos.launcher.media.MediaControllerPanel
 import dev.pipos.launcher.ui.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 private val Sections = listOf("APPS", "STAT", "DATA", "MAP", "RADIO")
 
@@ -296,9 +307,27 @@ private fun AppsPanel(
     onEdit: () -> Unit,
     launch: (LaunchableApp) -> Unit,
     toggle: (LaunchableApp) -> Unit,
-    move: (Int, Int) -> Unit,
+    move: (String, String) -> Unit,
     hide: (LaunchableApp) -> Unit
 ) {
+    val listState = rememberLazyListState()
+    val dragScope = rememberCoroutineScope()
+    val edgeThreshold = with(LocalDensity.current) { 60.dp.toPx() }
+    val autoScrollStep = with(LocalDensity.current) { 12.dp.toPx() }
+    var listTop by remember { mutableFloatStateOf(0f) }
+    var handleTop by remember { mutableFloatStateOf(0f) }
+    var draggedKey by remember { mutableStateOf<String?>(null) }
+    var dropTargetKey by remember { mutableStateOf<String?>(null) }
+    var pointerY by remember { mutableFloatStateOf(0f) }
+    var translationY by remember { mutableFloatStateOf(0f) }
+
+    // Only commits once when the finger is released. No DataStore writes during dragging.
+    fun resetDrag() {
+        draggedKey = null
+        dropTargetKey = null
+        translationY = 0f
+    }
+
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             PipText("APPLICATION DIRECTORY", Modifier.weight(1f), accent, prominent = true)
@@ -310,13 +339,85 @@ private fun AppsPanel(
             }
         }
         Spacer(Modifier.height(8.dp))
-        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().onGloballyPositioned { listTop = it.positionInRoot().y },
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             if (favoriteApps.isNotEmpty() && category == AppCategory.ALL) {
-                item { PipText("★ PINNED // ${favoriteApps.size} SHORTCUTS", Modifier.padding(vertical = 6.dp), accent, prominent = true) }
+                item {
+                    PipText(
+                        if (editing) "★ PINNED // HOLD ≡ AND DRAG TO REORDER" else "★ PINNED // ${favoriteApps.size} SHORTCUTS",
+                        Modifier.padding(vertical = 6.dp), accent, prominent = true
+                    )
+                }
                 if (editing || layout == FavoriteLayout.LIST) {
                     items(favoriteApps, key = { "pin:${it.key}" }) { app ->
                         val index = favoriteApps.indexOfFirst { it.key == app.key }
-                        FavoriteItem(app, index, favoriteApps.size, editing, accent, launch, toggle, move)
+                        FavoriteItem(
+                            app = app,
+                            index = index,
+                            count = favoriteApps.size,
+                            editing = editing,
+                            accent = accent,
+                            launch = launch,
+                            toggle = toggle,
+                            moveUp = { favoriteApps.getOrNull(index - 1)?.let { move(app.key, it.key) } },
+                            moveDown = { favoriteApps.getOrNull(index + 1)?.let { move(app.key, it.key) } },
+                            modifier = Modifier
+                                .graphicsLayer {
+                                    if (draggedKey == app.key) {
+                                        translationY = translationY
+                                        alpha = 0.83f
+                                    }
+                                }
+                                .background(if (dropTargetKey == app.key) accent.copy(alpha = 0.22f) else Color.Transparent),
+                            dragHandleModifier = Modifier
+                                .onGloballyPositioned { handleTop = it.positionInRoot().y }
+                                .pointerInput(app.key, editing) {
+                                    if (!editing) return@pointerInput
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { start ->
+                                            draggedKey = app.key
+                                            dropTargetKey = null
+                                            translationY = 0f
+                                            pointerY = handleTop + start.y
+                                        },
+                                        onDrag = { change, distance ->
+                                            change.consume()
+                                            translationY += distance.y
+                                            pointerY += distance.y
+                                            val localY = pointerY - listTop
+                                            val rows = listState.layoutInfo.visibleItemsInfo.filter {
+                                                (it.key as? String)?.startsWith("pin:") == true
+                                            }
+                                            val hovered = rows.minByOrNull {
+                                                abs(localY - (it.offset + it.size / 2f))
+                                            }
+                                            dropTargetKey = if (
+                                                abs(translationY) >= size.height / 2f &&
+                                                hovered != null &&
+                                                hovered.key != "pin:${app.key}"
+                                            ) (hovered.key as String).removePrefix("pin:") else null
+
+                                            val viewport = listState.layoutInfo.viewportSize.height
+                                            val scroll = when {
+                                                localY < edgeThreshold -> -autoScrollStep
+                                                localY > viewport - edgeThreshold -> autoScrollStep
+                                                else -> 0f
+                                            }
+                                            if (scroll != 0f) {
+                                                dragScope.launch { listState.scrollBy(scroll) }
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            dropTargetKey?.let { target -> move(app.key, target) }
+                                            resetDrag()
+                                        },
+                                        onDragCancel = { resetDrag() }
+                                    )
+                                }
+                        )
                     }
                 } else {
                     items(favoriteApps.chunked(2), key = { group -> "row:${group.first().key}" }) { group ->
@@ -354,17 +455,26 @@ private fun FavoriteTile(app: LaunchableApp, accent: Color, modifier: Modifier, 
 @Composable
 private fun FavoriteItem(
     app: LaunchableApp, index: Int, count: Int, editing: Boolean, accent: Color,
-    launch: (LaunchableApp) -> Unit, toggle: (LaunchableApp) -> Unit, move: (Int, Int) -> Unit
+    launch: (LaunchableApp) -> Unit, toggle: (LaunchableApp) -> Unit,
+    moveUp: () -> Unit, moveDown: () -> Unit,
+    modifier: Modifier = Modifier, dragHandleModifier: Modifier = Modifier
 ) {
-    Row(Modifier.fillMaxWidth().pipFrame(accent).heightIn(min = 64.dp).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().pipFrame(accent).heightIn(min = 64.dp).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
         MonochromeAppIcon(app.packageName, app.activityName, accent, Modifier.padding(horizontal = 8.dp).size(28.dp))
         PipText(app.label, Modifier.weight(1f).clickable { if (!editing) launch(app) }.padding(8.dp), accent)
         if (editing) {
-            PipButton("↑", accent, enabled = index > 0) { move(index, index - 1) }
+            PipButton("↑", accent, enabled = index > 0) { moveUp() }
             Spacer(Modifier.width(4.dp))
-            PipButton("↓", accent, enabled = index < count - 1) { move(index, index + 1) }
+            PipButton("↓", accent, enabled = index < count - 1) { moveDown() }
             Spacer(Modifier.width(4.dp))
             PipButton("×", accent) { toggle(app) }
+            Box(
+                Modifier.padding(start = 4.dp).size(48.dp).then(dragHandleModifier)
+                    .semantics { contentDescription = "Hold and drag to reorder ${app.label}" },
+                contentAlignment = Alignment.Center
+            ) {
+                PipText("≡", color = accent, prominent = true)
+            }
         } else {
             PipButton("OPEN", accent) { launch(app) }
         }

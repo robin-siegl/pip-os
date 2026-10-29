@@ -30,10 +30,14 @@ class FavoritesRepository(private val context: Context) {
         }
     }
 
-    suspend fun move(from: Int, to: Int) {
+    suspend fun moveByKey(dragged: String, target: String) {
         context.favoritesStore.edit { prefs ->
             val saved = prefs[orderKey]?.split('\n')?.filter(String::isNotEmpty).orEmpty()
-            val next = FavoriteOrder.move(FavoriteOrder.reconcile(saved, prefs[legacyKey].orEmpty()), from, to)
+            val next = FavoriteOrder.moveByKey(
+                FavoriteOrder.reconcile(saved, prefs[legacyKey].orEmpty()),
+                dragged,
+                target
+            )
             prefs[legacyKey] = next.toSet()
             prefs[orderKey] = next.joinToString("\n")
         }

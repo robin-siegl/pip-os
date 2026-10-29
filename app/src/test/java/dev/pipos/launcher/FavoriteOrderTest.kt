@@ -18,6 +18,19 @@ class FavoriteOrderTest {
         assertEquals(listOf("a", "b", "c"), FavoriteOrder.move(listOf("a", "b", "c"), -1, 1))
     }
 
+    @Test fun dragAndDropMovesByStableKeys() {
+        assertEquals(listOf("b", "c", "a"), FavoriteOrder.moveByKey(listOf("a", "b", "c"), "a", "c"))
+        assertEquals(listOf("c", "a", "b"), FavoriteOrder.moveByKey(listOf("a", "b", "c"), "c", "a"))
+    }
+
+    @Test fun dragAndDropIgnoresUnknownTargetsAndSameKey() {
+        val current = listOf("a", "hidden", "b")
+        assertEquals(current, FavoriteOrder.moveByKey(current, "a", "missing"))
+        assertEquals(current, FavoriteOrder.moveByKey(current, "missing", "a"))
+        assertEquals(current, FavoriteOrder.moveByKey(current, "a", "a"))
+        assertEquals(listOf("hidden", "b", "a"), FavoriteOrder.moveByKey(current, "a", "b"))
+    }
+
     @Test fun toggleAddsToEndAndRemoves() {
         assertEquals(listOf("a", "b"), FavoriteOrder.toggle(listOf("a"), "b"))
         assertEquals(listOf("b"), FavoriteOrder.toggle(listOf("a", "b"), "a"))
