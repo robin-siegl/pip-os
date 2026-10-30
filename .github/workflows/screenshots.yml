@@ -63,5 +63,7 @@ jobs:
           git add docs/screenshots/*.png
           if ! git diff --cached --quiet; then
             git commit -m "docs: capture actual PIP-OS screens from Android emulator"
-            git push
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
