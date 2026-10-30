@@ -41,7 +41,9 @@ jobs:
             gradle :app:connectedDebugAndroidTest --stacktrace \
               -Pandroid.testInstrumentationRunnerArguments.class=dev.pipos.launcher.ScreenshotCaptureTest
             mkdir -p docs/screenshots
-            adb pull /sdcard/Android/data/dev.pipos.launcher/files/screenshots/ docs/screenshots/
+            for file in apps.png apps-edit.png stat.png settings.png; do
+              adb pull "/sdcard/Android/data/dev.pipos.launcher/files/screenshots/$file" "docs/screenshots/$file"
+            done
             test -s docs/screenshots/apps.png
             test -s docs/screenshots/apps-edit.png
             test -s docs/screenshots/stat.png
