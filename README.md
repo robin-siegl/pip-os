@@ -4,6 +4,24 @@ PIP-OS is an experimental Android home launcher with a monochrome, retro-futuris
 
 The design is original and inspired by classic monochrome computers and game-style wrist terminals. No Fallout artwork, fonts, branding, or other game assets are bundled.
 
+## Screenshots
+
+Application directory, pinned-app editing, and system status:
+
+<p>
+  <img src="docs/screenshots/apps.png" width="220" alt="PIP-OS application directory with pinned shortcuts, monochrome icons and terminal search" />
+  <img src="docs/screenshots/apps-edit.png" width="220" alt="Pinned-app editing with drag handles and accessible reorder controls" />
+  <img src="docs/screenshots/stat.png" width="220" alt="PIP-OS system status screen with battery and storage gauges" />
+</p>
+
+Configuration and home-app settings:
+
+<p>
+  <img src="docs/screenshots/settings.png" width="220" alt="PIP-OS configuration screen with home-app options and display preferences" />
+</p>
+
+Captured from the actual Android app on an API 35 emulator. To regenerate these images, run [Capture README screenshots](https://github.com/robin-siegl/pip-os/actions/workflows/screenshots.yml) in GitHub Actions. Screenshot appearance and listed apps reflect the emulator rather than a personal device.
+
 ## Features
 
 - Native home-screen replacement using Android's supported launcher intent
