@@ -38,8 +38,7 @@ jobs:
           profile: pixel_6
           script: |
             set -e
-            gradle :app:connectedDebugAndroidTest --stacktrace \
-              -Pandroid.testInstrumentationRunnerArguments.class=dev.pipos.launcher.ScreenshotCaptureTest
+            gradle :app:connectedDebugAndroidTest --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=dev.pipos.launcher.ScreenshotCaptureTest
             mkdir -p docs/screenshots
             for file in apps.png apps-edit.png stat.png settings.png; do
               adb pull "/sdcard/Android/data/dev.pipos.launcher/files/screenshots/$file" "docs/screenshots/$file"
@@ -48,6 +47,15 @@ jobs:
             test -s docs/screenshots/apps-edit.png
             test -s docs/screenshots/stat.png
             test -s docs/screenshots/settings.png
+      - name: Upload instrumentation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-os-screenshot-test-diagnostics
+          path: |
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
+          if-no-files-found: ignore
       - name: Upload captured PNGs
         uses: actions/upload-artifact@v4
         with:
