@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pip-os-screenshots
+  group: pip-os-screenshots-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
